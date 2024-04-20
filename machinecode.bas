@@ -5,6 +5,7 @@
 15 READ Y
 25 POKE X,Y
 30 NEXT X
+35 REM Put the 65000 start address into the USR routene address
 40 POKE -32695,232
 45 POKE -32694,253
 50 rem this calls the routene
