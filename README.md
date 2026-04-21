@@ -1,3 +1,6 @@
+This site also covers the 56k versions, the only difference is the ammount of memory. Basic auto detects this.
+Only Camelforth needs to have an address changed in it's ASM file. Hence the 56k version above
+
 These are few BASIC programs, as text, you can upload them by cut-n-past if needed.
 
 Depending of your board etc, you may need to set a character delay of end of line delay in your terminal software.
