@@ -1,0 +1,344 @@
+/tmp/tmpXXEX3VVZ.asm:
+     1                          MODULE asm_acia_asm
+     2                          LINE 0, "asm_acia.asm"
+asm_acia.asm:
+                                
+     1                          ;==============================================================================
+     2                          ; acia driver. Adapted from feilipu's ACIA driver for the RC2014.
+     3                          ;==============================================================================
+     4                          ;
+     5                          ; The rework to support MS Basic HLOAD and the Z80 instruction tuning are
+     6                          ; copyright (C) 2020 Phillip Stevens
+     7                          ;
+     8                          ; Modifications for CamelForth ROM made by Justin Skists.
+     9                          ;
+    10                          ; This Source Code Form is subject to the terms of the Mozilla Public
+    11                          ; License, v. 2.0. If a copy of the MPL was not distributed with this
+    12                          ; file, You can obtain one at http://mozilla.org/MPL/2.0/.
+    13                          ;
+    14                          ; ACIA 6850 interrupt driven serial I/O to run modified NASCOM Basic 4.7.
+    15                          ; Full input and output buffering with incoming data hardware handshaking.
+    16                          ; Handshake shows full before the buffer is totally filled to allow run-on
+    17                          ; from the sender. Transmit and receive are interrupt driven.
+    18                          ;
+    19                          ; feilipu, August 2020
+    20                          ;
+    21                          ;==============================================================================
+    22                          ;
+    23                          ; INCLUDES SECTION
+    24                          ;
+    25                          
+    26                          ;==============================================================================
+    27                          ;
+    28                          ; DEFINES SECTION
+    29                          ;
+    30                          
+    31                          DEFC    SER_RX_BUFSIZE  =   $100    ; FIXED Rx buffer size, 256 Bytes, no range checking
+    32                          DEFC    SER_RX_FULLSIZE =   SER_RX_BUFSIZE - $10
+    33                          ; Fullness of the Rx Buffer, when not_RTS is signalled
+    34                          DEFC    SER_RX_EMPTYSIZE =  $08     ; Fullness of the Rx Buffer, when RTS is signalled
+    35                          
+    36                          DEFC    SER_TX_BUFSIZE  =   $40     ; Size of the Tx Buffer, 2^n Bytes, n = 6 here
+    37                          
+    38                          DEFC Z80_ACIA_BUFFER_BASE = 0x2000
+    39                          
+    40                          ;==============================================================================
+    41                          ;
+    42                          ; Some definitions used with the RC2014 on-board peripherals:
+    43                          ;
+    44                          
+    45                          ; ACIA 68B50 Register Mnemonics
+    46                          
+    47                          DEFC    SER_CTRL_ADDR   =   $80    ; Address of Control Register (write only)
+    48                          DEFC    SER_STATUS_ADDR =   $80    ; Address of Status Register (read only)
+    49                          DEFC    SER_DATA_ADDR   =   $81    ; Address of Data Register
+    50                          
+    51                          DEFC    SER_RESET       =   $03    ; Master Reset (issue before any other Control word)
+    52                          DEFC    SER_CLK_DIV_64  =   $02    ; Divide the Clock by 64 (default value)
+    53                          DEFC    SER_CLK_DIV_16  =   $01    ; Divide the Clock by 16
+    54                          DEFC    SER_CLK_DIV_01  =   $00    ; Divide the Clock by 1
+    55                          
+    56                          DEFC    SER_8O1         =   $1C    ; 8 Bits  Odd Parity 1 Stop Bit
+    57                          DEFC    SER_8E1         =   $18    ; 8 Bits Even Parity 1 Stop Bit
+    58                          DEFC    SER_8N1         =   $14    ; 8 Bits   No Parity 1 Stop Bit
+    59                          DEFC    SER_8N2         =   $10    ; 8 Bits   No Parity 2 Stop Bits
+    60                          DEFC    SER_7O1         =   $0C    ; 7 Bits  Odd Parity 1 Stop Bit
+    61                          DEFC    SER_7E1         =   $08    ; 7 Bits Even Parity 1 Stop Bit
+    62                          DEFC    SER_7O2         =   $04    ; 7 Bits  Odd Parity 2 Stop Bits
+    63                          DEFC    SER_7E2         =   $00    ; 7 Bits Even Parity 2 Stop Bits
+    64                          
+    65                          DEFC    SER_TDI_BRK     =   $60    ; _RTS low,  Transmitting Interrupt Disabled, BRK on Tx
+    66                          DEFC    SER_TDI_RTS1    =   $40    ; _RTS high, Transmitting Interrupt Disabled
+    67                          DEFC    SER_TEI_RTS0    =   $20    ; _RTS low,  Transmitting Interrupt Enabled
+    68                          DEFC    SER_TDI_RTS0    =   $00    ; _RTS low,  Transmitting Interrupt Disabled
+    69                          
+    70                          DEFC    SER_TEI_MASK    =   $60    ; Mask for the Tx Interrupt & RTS bits
+    71                          
+    72                          DEFC    SER_REI         =   $80    ; Receive Interrupt Enabled
+    73                          
+    74                          DEFC    SER_IRQ         =   $80    ; IRQ (Either Transmitted or Received Byte)
+    75                          DEFC    SER_PE          =   $40    ; Parity Error (Received Byte)
+    76                          DEFC    SER_OVRN        =   $20    ; Overrun (Received Byte
+    77                          DEFC    SER_FE          =   $10    ; Framing Error (Received Byte)
+    78                          DEFC    SER_CTS         =   $08    ; Clear To Send
+    79                          DEFC    SER_DCD         =   $04    ; Data Carrier Detect
+    80                          DEFC    SER_TDRE        =   $02    ; Transmit Data Register Empty
+    81                          DEFC    SER_RDRF        =   $01    ; Receive Data Register Full
+    82                          
+    83                          ; General TTY
+    84                          
+    85                          DEFC    CTRLC           =    03H     ; Control "C"
+    86                          DEFC    CTRLG           =    07H     ; Control "G"
+    87                          DEFC    BKSP            =    08H     ; Back space
+    88                          DEFC    LF              =    0AH     ; Line feed
+    89                          DEFC    CS              =    0CH     ; Clear screen
+    90                          DEFC    CR              =    0DH     ; Carriage return
+    91                          DEFC    CTRLO           =    0FH     ; Control "O"
+    92                          DEFC    CTRLQ           =    11H     ; Control "Q"
+    93                          DEFC    CTRLR           =    12H     ; Control "R"
+    94                          DEFC    CTRLS           =    13H     ; Control "S"
+    95                          DEFC    CTRLU           =    15H     ; Control "U"
+    96                          DEFC    ESC             =    1BH     ; Escape
+    97                          DEFC    DEL             =    7FH     ; Delete
+    98                          
+    99                          ;==============================================================================
+   100                          ;
+   101                          ; VARIABLES
+   102                          ;
+   103                          
+   104                          DEFC    serRxInPtr      =     Z80_ACIA_BUFFER_BASE
+   105                          DEFC    serRxOutPtr     =     serRxInPtr+2
+   106                          DEFC    serTxInPtr      =     serRxOutPtr+2
+   107                          DEFC    serTxOutPtr     =     serTxInPtr+2
+   108                          DEFC    serRxBufUsed    =     serTxOutPtr+2
+   109                          DEFC    serTxBufUsed    =     serRxBufUsed+1
+   110                          DEFC    serControl      =     serTxBufUsed+1
+   111                          
+   112                          ; I/O Tx Buffer must start on 0xnnn0 because we increment low byte to roll-over
+   113                          DEFC    BUFSTART_TX_IO  =     Z80_ACIA_BUFFER_BASE-(Z80_ACIA_BUFFER_BASE%$100) + $80
+   114                          
+   115                          ; I/O Rx Buffer must start on 0xnn00 because we increment low byte to roll-over
+   116                          DEFC    BUFSTART_RX_IO  =     Z80_ACIA_BUFFER_BASE-(Z80_ACIA_BUFFER_BASE%$100) + $100
+   117                          
+   118                          DEFC    serTxBuf        =     BUFSTART_TX_IO
+   119                          DEFC    serRxBuf        =     BUFSTART_RX_IO
+   120                          
+   121                          ;==============================================================================
+   122                          ; C Section
+   123                          SECTION code_user
+   124                          
+   125                          
+   126                          ;==============================================================================
+   127                          ;
+   128                          ; CODE SECTION
+   129                          ;
+   130                          
+   131                          ;------------------------------------------------------------------------------
+   132                          PUBLIC handle_acia_int
+   133                          handle_acia_int:
+   134  0000  f5                        push af
+   135  0001  e5                        push hl
+   136                          
+   137  0002  db80                      in a,(SER_STATUS_ADDR)      ; get the status of the ACIA
+   138  0004  0f                        rrca                        ; check whether a byte has been received, via SER_RDRF
+   139  0005  302f                      jr NC,im1_tx_send           ; if not, go check for bytes to transmit
+   140                          
+   141                          im1_rx_get:
+   142  0007  db81                      in a,(SER_DATA_ADDR)        ; Get the received byte from the ACIA
+   143  0009  6f                        ld l,a                      ; Move Rx byte to l
+   144                          
+   145  000a  3a0820                    ld a,(serRxBufUsed)         ; Get the number of bytes in the Rx buffer
+   146  000d  feff                      cp SER_RX_BUFSIZE-1         ; check whether there is space in the buffer
+   147  000f  3020                      jr NC,im1_tx_check          ; buffer full, check if we can send something
+   148                          
+   149  0011  7d                        ld a,l                      ; get Rx byte from l
+   150  0012  210820                    ld hl,serRxBufUsed
+   151  0015  34                        inc (hl)                    ; atomically increment Rx buffer count
+   152  0016  2a0020                    ld hl,(serRxInPtr)          ; get the pointer to where we poke
+   153  0019  77                        ld (hl),a                   ; write the Rx byte to the serRxInPtr address
+   154                          
+   155  001a  2c                        inc l                       ; move the Rx pointer low byte along, 0xFF rollover
+   156  001b  220020                    ld (serRxInPtr),hl          ; write where the next byte should be poked
+   157                          
+   158  001e  3a0820                    ld a,(serRxBufUsed)         ; get the current Rx count
+   159  0021  fef0                      cp SER_RX_FULLSIZE          ; compare the count with the preferred full size
+   160  0023  200c                      jr NZ,im1_tx_check          ; leave the RTS low, and check for Rx/Tx possibility
+   161                          
+   162  0025  3a0a20                    ld a,(serControl)           ; get the ACIA control echo byte
+   163  0028  e69f                      and ~SER_TEI_MASK           ; mask out the Tx interrupt bits
+   164  002a  f640                      or SER_TDI_RTS1             ; Set RTS high, and disable Tx Interrupt
+   165  002c  320a20                    ld (serControl),a           ; write the ACIA control echo byte back
+   166  002f  d380                      out (SER_CTRL_ADDR),a       ; Set the ACIA CTRL register
+   167                          
+   168                          im1_tx_check:
+   169  0031  db80                      in a,(SER_STATUS_ADDR)      ; get the status of the ACIA
+   170  0033  0f                        rrca                        ; check whether a byte has been received, via SER_RDRF
+   171  0034  38d1                      jr C,im1_rx_get             ; another byte received, go get it
+   172                          
+   173                          im1_tx_send:
+   174  0036  0f                        rrca                        ; check whether a byte can be transmitted, via SER_TDRE
+   175  0037  3026                      jr NC,im1_txa_end           ; if not, we're done for now
+   176                          
+   177  0039  3a0920                    ld a,(serTxBufUsed)         ; get the number of bytes in the Tx buffer
+   178  003c  b7                        or a                        ; check whether it is zero
+   179  003d  2816                      jr Z,im1_tei_clear          ; if the count is zero, then disable the Tx Interrupt
+   180                          
+   181  003f  2a0620                    ld hl,(serTxOutPtr)         ; get the pointer to place where we pop the Tx byte
+   182  0042  7e                        ld a,(hl)                   ; get the Tx byte
+   183  0043  d381                      out (SER_DATA_ADDR),a       ; output the Tx byte to the ACIA
+   184                          
+   185  0045  2c                        inc l                       ; move the Tx pointer, just low byte, along
+   186  0046  3e3f                      ld a,SER_TX_BUFSIZE-1       ; load the buffer size, (n^2)-1
+   187  0048  a5                        and l                       ; range check
+   188  0049  f680                      or serTxBuf&0xFF            ; locate base
+   189  004b  6f                        ld l,a                      ; return the low byte to l
+   190  004c  220620                    ld (serTxOutPtr),hl         ; write where the next byte should be popped
+   191                          
+   192  004f  210920                    ld hl,serTxBufUsed
+   193  0052  35                        dec (hl)                    ; atomically decrement current Tx count
+   194                          
+   195  0053  200a                      jr NZ,im1_txa_end           ; if we've more Tx bytes to send, we're done for now
+   196                          
+   197                          im1_tei_clear:
+   198  0055  3a0a20                    ld a,(serControl)           ; get the ACIA control echo byte
+   199  0058  e6df                      and ~SER_TEI_RTS0           ; mask out (disable) the Tx Interrupt
+   200  005a  320a20                    ld (serControl),a           ; write the ACIA control byte back
+   201  005d  d380                      out (SER_CTRL_ADDR),a       ; Set the ACIA CTRL register
+   202                          
+   203                          im1_txa_end:
+   204  005f  e1                        pop hl
+   205  0060  f1                        pop af
+   206                          
+   207  0061  c9                        ret
+   208                          
+   209                          ;------------------------------------------------------------------------------
+   210                          ; SECTION z80_acia_rxa_chk          ; ORG $00F0
+   211                          PUBLIC acia_pollc
+   212                          acia_pollc:
+   213  0062  3a0820                   ld a,(serRxBufUsed)
+   214  0065  c9                       ret
+   215                          
+   216                          ;------------------------------------------------------------------------------
+   217                          ;SECTION z80_acia_rxa                ; ORG $00F0
+   218                          PUBLIC acia_getc
+   219                          acia_getc:
+   220  0066  3a0820                    ld a,(serRxBufUsed)         ; get the number of bytes in the Rx buffer
+   221  0069  b7                        or a                        ; see if there are zero bytes available
+   222  006a  28fa                      jr Z,acia_getc              ; wait, if there are no bytes available
+   223                          
+   224  006c  fe08                      cp SER_RX_EMPTYSIZE         ; compare the count with the preferred empty size
+   225  006e  200e                      jr NZ,rxa_clean_up          ; if the buffer is too full, don't change the RTS
+   226                          
+   227  0070  f3                        di                          ; critical section begin
+   228  0071  3a0a20                    ld a,(serControl)           ; get the ACIA control echo byte
+   229  0074  e69f                      and ~SER_TEI_MASK           ; mask out the Tx interrupt bits
+   230  0076  f600                      or SER_TDI_RTS0             ; set RTS low.
+   231  0078  320a20                    ld (serControl),a           ; write the ACIA control echo byte back
+   232  007b  fb                        ei                          ; critical section end
+   233  007c  d380                      out (SER_CTRL_ADDR),a       ; set the ACIA CTRL register
+   234                          
+   235                          rxa_clean_up:
+   236  007e  e5                        push hl                     ; store HL so we don't clobber it
+   237                          
+   238  007f  210820                    ld hl,serRxBufUsed
+   239  0082  f3                        di
+   240  0083  35                        dec (hl)                    ; atomically decrement Rx count
+   241  0084  2a0220                    ld hl,(serRxOutPtr)         ; get the pointer to place where we pop the Rx byte
+   242  0087  fb                        ei
+   243  0088  7e                        ld a,(hl)                   ; get the Rx byte
+   244                          
+   245  0089  2c                        inc l                       ; move the Rx pointer low byte along
+   246  008a  220220                    ld (serRxOutPtr),hl         ; write where the next byte should be popped
+   247                          
+   248  008d  e1                        pop hl                      ; recover HL
+   249  008e  c9                        ret                         ; char ready in A
+   250                          
+   251                          ;------------------------------------------------------------------------------
+   252                          ;SECTION z80_acia_txa                ; ORG $0120
+   253                          PUBLIC acia_putc
+   254                          acia_putc:
+   255  008f  e5                        push hl                     ; store HL so we don't clobber it
+   256  0090  6f                        ld l,a                      ; store Tx character
+   257                          
+   258  0091  3a0920                    ld a,(serTxBufUsed)         ; Get the number of bytes in the Tx buffer
+   259  0094  b7                        or a                        ; check whether the buffer is empty
+   260  0095  200b                      jr NZ,txa_buffer_out        ; buffer not empty, so abandon immediate Tx
+   261                          
+   262  0097  db80                      in a,(SER_STATUS_ADDR)      ; get the status of the ACIA
+   263  0099  e602                      and SER_TDRE                ; check whether a byte can be transmitted
+   264  009b  2805                      jr Z,txa_buffer_out         ; if not, so abandon immediate Tx
+   265                          
+   266  009d  7d                        ld a,l                      ; Retrieve Tx character for immediate Tx
+   267  009e  d381                      out (SER_DATA_ADDR),a       ; immediately output the Tx byte to the ACIA
+   268                          
+   269  00a0  e1                        pop hl                      ; recover HL
+   270  00a1  c9                        ret                         ; and just complete
+   271                          
+   272                          txa_buffer_out:
+   273  00a2  3a0920                    ld a,(serTxBufUsed)         ; Get the number of bytes in the Tx buffer
+   274  00a5  fe3f                      cp SER_TX_BUFSIZE-1         ; check whether there is space in the buffer
+   275  00a7  30f9                      jr NC,txa_buffer_out        ; buffer full, so wait till it has space
+   276                          
+   277  00a9  7d                        ld a,l                      ; Retrieve Tx character
+   278                          
+   279  00aa  210920                    ld hl,serTxBufUsed
+   280  00ad  f3                        di
+   281  00ae  34                        inc (hl)                    ; atomic increment of Tx count
+   282  00af  2a0420                    ld hl,(serTxInPtr)          ; get the pointer to where we poke
+   283  00b2  fb                        ei
+   284  00b3  77                        ld (hl),a                   ; write the Tx byte to the serTxInPtr
+   285                          
+   286  00b4  2c                        inc l                       ; move the Tx pointer, just low byte along
+   287  00b5  3e3f                      ld a,SER_TX_BUFSIZE-1       ; load the buffer size, (n^2)-1
+   288  00b7  a5                        and l                       ; range check
+   289  00b8  f680                      or serTxBuf&0xFF            ; locate base
+   290  00ba  6f                        ld l,a                      ; return the low byte to l
+   291  00bb  220420                    ld (serTxInPtr),hl          ; write where the next byte should be poked
+   292                          
+   293  00be  e1                        pop hl                      ; recover HL
+   294                          
+   295  00bf  3a0a20                    ld a,(serControl)           ; get the ACIA control echo byte
+   296  00c2  e620                      and SER_TEI_RTS0            ; test whether ACIA interrupt is set
+   297  00c4  c0                        ret NZ                      ; if so then just return
+   298                          
+   299  00c5  f3                        di                          ; critical section begin
+   300  00c6  3a0a20                    ld a,(serControl)           ; get the ACIA control echo byte again
+   301  00c9  e69f                      and ~SER_TEI_MASK           ; mask out the Tx interrupt bits
+   302  00cb  f620                      or SER_TEI_RTS0             ; set RTS low. if the TEI was not set, it will work again
+   303  00cd  320a20                    ld (serControl),a           ; write the ACIA control echo byte back
+   304  00d0  d380                      out (SER_CTRL_ADDR),a       ; set the ACIA CTRL register
+   305  00d2  fb                        ei                          ; critical section end
+   306  00d3  c9                        ret
+   307                          
+   308                          
+   309                          ;------------------------------------------------------------------------------
+   310                          
+   311                          ; assume interrupts are disabled
+   312                          PUBLIC acia_init
+   313                          acia_init:
+   314  00d4  210021                    LD HL,serRxBuf              ; Initialise Rx Buffer
+   315  00d7  220020                    LD (serRxInPtr),HL
+   316  00da  220220                    LD (serRxOutPtr),HL
+   317                          
+   318  00dd  218020                    LD HL,serTxBuf              ; Initialise Tx Buffer
+   319  00e0  220420                    LD (serTxInPtr),HL
+   320  00e3  220620                    LD (serTxOutPtr),HL
+   321                          
+   322  00e6  af                        XOR A                       ; 0 the RXA & TXA Buffer Counts
+   323  00e7  320820                    LD (serRxBufUsed),A
+   324  00ea  320920                    LD (serTxBufUsed),A
+   325                          
+   326  00ed  3e03                      LD A,SER_RESET              ; Master Reset the ACIA
+   327  00ef  d380                      OUT (SER_CTRL_ADDR),A
+   328                          
+   329  00f1  3e96                      LD A,SER_REI|SER_TDI_RTS0|SER_8N1|SER_CLK_DIV_64
+   330                                                              ; load the default ACIA configuration
+   331                                                              ; 8n1 at 115200 baud
+   332                                                              ; receive interrupt enabled
+   333                                                              ; transmit interrupt disabled
+   334                          
+   335  00f3  320a20                    LD (serControl),A           ; write the ACIA control byte echo
+   336  00f6  d380                      OUT (SER_CTRL_ADDR),A       ; output to the ACIA control byte
+   337                          
+   338  00f8  c9                        RET
+   339                          

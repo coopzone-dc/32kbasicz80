@@ -1,0 +1,77 @@
+/tmp/tmpXXGIXfN1.asm:
+     1                          MODULE rom_rst_asm
+     2                          LINE 0, "rom_rst.asm"
+rom_rst.asm:
+                                
+     1                          ; MIT License
+     2                          ;
+     3                          ; Copyright (c) 2023 Justin Skists
+     4                          ;
+     5                          ; Permission is hereby granted, free of charge, to any person obtaining a copy
+     6                          ; of this software and associated documentation files (the "Software"), to deal
+     7                          ; in the Software without restriction, including without limitation the rights
+     8                          ; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     9                          ; copies of the Software, and to permit persons to whom the Software is
+    10                          ; furnished to do so, subject to the following conditions:
+    11                          ;
+    12                          ; The above copyright notice and this permission notice shall be included in all
+    13                          ; copies or substantial portions of the Software.
+    14                          ;
+    15                          ; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    16                          ; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    17                          ; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    18                          ; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    19                          ; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    20                          ; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    21                          ; SOFTWARE.
+    22                          
+    23                          
+    24                          ; RST locations
+    25                          ; For convenience, because we can't easily change the ROM code interrupt
+    26                          ; routines already present in the RC2014, the ACIA serial Tx and Rx routines
+    27                          ; are reachable by calling RST instructions from your program.
+    28                          
+    29                          ; Tx: RST 08H expects a byte to transmit in the a register.
+    30                          ; Rx: RST 10H returns a received byte in the a register, and will block (loop)
+    31                          ;     until it has a byte to return.
+    32                          ; Rx Check: RST 18H will immediately return the number of bytes in the Rx
+    33                          ;           buffer (0 if buffer empty) in the a register.
+    34                          
+    35                          ; ACIA Interrupt: RST 38H is used by the ACIA 68B50 Serial Device
+    36                          
+    37                          ; TODO: Move All RST xxH targets to be rewritten in a JP table originating at 0x8000 in RAM.
+    38                          ; This will allow the use of debugging tools and reorganising the efficient RST call instructions as needed.
+    39                          
+    40                          
+    41                          EXTERN handle_acia_int
+    42                          EXTERN acia_putc
+    43                          EXTERN acia_getc
+    44                          EXTERN acia_pollc
+    45                          
+    46                          
+    47                          SECTION code_user
+    48                          
+    49                          
+    50                          PUBLIC _z80_rst_08h
+    51                          _z80_rst_08h:
+    52  0000  c30000                jp acia_putc
+    53                          
+    54                          
+    55                          PUBLIC _z80_rst_10h
+    56                          _z80_rst_10h:
+    57  0003  c30000                jp acia_getc
+    58                          
+    59                          
+    60                          PUBLIC _z80_rst_18h
+    61                          _z80_rst_18h:
+    62  0006  c30000                jp acia_pollc
+    63                          
+    64                          
+    65                          PUBLIC _z80_rst_38h
+    66                          _z80_rst_38h:
+    67  0009  f3                    di
+    68  000a  cd0000                call handle_acia_int
+    69  000d  fb                    ei
+    70  000e  ed4d                  reti
+    71                          
+    72                          

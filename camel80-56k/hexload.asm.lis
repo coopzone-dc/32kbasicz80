@@ -1,0 +1,121 @@
+/tmp/tmpXXk8FeOz.asm:
+     1                          MODULE hexload_asm
+     2                          LINE 0, "hexload.asm"
+hexload.asm:
+                                
+     1                          ; HEX LOADER by Filippo Bergamasco
+     2                          ;     and modified by feilipu for z88dk
+     3                          ;
+     4                          ; Original code: https://github.com/RC2014Z80/RC2014/blob/master/BASIC-Programs/hexload/hexload.asm
+     5                          ;
+     6                          ; No Licence found, so assuming a permissive public licence, attribition given.
+     7                          
+     8                          PUBLIC _hexload
+     9                          
+    10                          SECTION     code_user
+    11                          
+    12                          _hexload:
+    13  0000  210000                        ld hl,initstr
+    14  0003  cd0000                        call print
+    15                          waitcolon:
+    16  0006  d7                            rst 10H         ; wait for Rx ':'
+    17  0007  fe00                          cp ':'
+    18  0009  2000                          jr NZ,waitcolon
+    19  000b  0e00                          ld c,0          ; reset C to compute checksum
+    20  000d  cd0000                        call readbyte   ; read byte count
+    21  0010  47                            ld b,a          ; store it in B
+    22  0011  cd0000                        call readbyte   ; read upper byte of address
+    23  0014  57                            ld d,a          ; store in D
+    24  0015  cd0000                        call readbyte   ; read lower byte of address
+    25  0018  5f                            ld e,a          ; store in E
+    26  0019  cd0000                        call readbyte   ; read record type
+    27  001c  fe00                          cp 01           ; check if record type is 01 (end of file)
+    28  001e  2800                          jr Z,endload
+    29  0020  fe00                          cp 00           ; check if record type is 00 (data)
+    30  0022  2000                          jr NZ,invtype   ; if not, error
+    31                          
+    32                          readdata:
+    33  0024  cd0000                        call readbyte
+    34  0027  12                            ld (de),a
+    35  0028  13                            inc de
+    36  0029  1000                          djnz readdata   ; if not, loop
+    37                          
+    38  002b  cd0000                        call readbyte   ; read checksum
+    39  002e  79                            ld a,c          ; C should be 0
+    40  002f  b7                            or a
+    41  0030  2000                          jr NZ,badck
+    42                          
+    43  0032  3e00                          ld a,'#'        ; "#" per line loaded
+    44  0034  cf                            rst 8H          ; Tx byte
+    45  0035  1800                          jr waitcolon
+    46                          
+    47                          endload:
+    48  0037  cd0000                        call readbyte   ; read last checksum (not used)
+    49  003a  79                            ld a,c          ; C checksum should be 0
+    50  003b  b7                            or a
+    51  003c  2000                          jr NZ,badck     ; non zero, we have an issue
+    52  003e  210000                        ld hl,loadokstr
+    53  0041  cd0000                        call print
+    54  0044  c9                            ret
+    55                          
+    56                          invtype:
+    57  0045  210000                        ld hl,invalidtypestr
+    58  0048  cd0000                        call print
+    59  004b  c9                            ret
+    60                          
+    61                          badck:
+    62  004c  210000                        ld hl,badchecksumstr
+    63  004f  cd0000                        call print
+    64  0052  c9                            ret
+    65                          
+    66                          readbyte:                   ; Returns byte in A, checksum in C
+    67  0053  cd0000                        call readnibble ; read the first nibble
+    68  0056  07                            rlca            ; shift it left by 4 bits
+    69  0057  07                            rlca
+    70  0058  07                            rlca
+    71  0059  07                            rlca
+    72  005a  6f                            ld l,a          ; temporarily store the first nibble in L
+    73  005b  cd0000                        call readnibble ; get the second (low) nibble
+    74  005e  b5                            or l            ; assemble two nibbles into one byte in A
+    75  005f  6f                            ld l,a          ; put assembled byte back into L
+    76  0060  81                            add a,c         ; add the byte read to C (for checksum)
+    77  0061  4f                            ld c,a
+    78  0062  7d                            ld a,l
+    79  0063  c9                            ret             ; return the byte read in A (L = char received too)
+    80                          
+    81                          readnibble:
+    82  0064  d7                            rst 10H         ; Rx byte
+    83  0065  d630                          sub '0'
+    84  0067  fe0a                          cp 10
+    85  0069  d8                            ret C           ; if A<10 just return
+    86  006a  d607                          sub 7           ; else subtract 'A'-'0' (17) and add 10
+    87  006c  c9                            ret
+    88                          
+    89                          print:
+    90  006d  7e                            ld a,(hl)
+    91  006e  b7                            or a
+    92  006f  c8                            ret Z
+    93                          
+    94  0070  cf                            rst 8H          ; Tx byte
+    95  0071  23                            inc hl
+    96  0072  18f9                          jr print
+    97                          
+    98                          SECTION             rodata_user
+    99                          
+   100  0000  480000206d004144  initstr:            DEFM "HEX LOADER by Filippo Bergamasco"
+              3a52fb6200205300  
+              6c6953006f205300  
+              7267530061016317  
+   101  0020  2000202165530069                      DEFM " & feilipu for z88dk"
+              7075f9665300207a  
+              381a6423          
+   102  0034  0a0dcf00                              DEFM 10,13,":",0
+   103  0038  0a0d496e760e6c5a  invalidtypestr:     DEFM 10,13,"Invalid Type",10,13,0
+              00206d0070650a0d  
+              00                
+   104  0049  0a0d42614900436d  badchecksumstr:     DEFM 10,13,"Bad Checksum",10,13,0
+              00636b64006d0a0d  
+              00                
+   105  005a  0a0d64006e650a0d  loadokstr:          DEFM 10,13,"Done",10,13,0
+              00                
+   106                          

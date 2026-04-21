@@ -1,0 +1,70 @@
+/tmp/tmpXX1reTnB.asm:
+     1                          MODULE main_asm
+     2                          LINE 0, "main.asm"
+main.asm:
+                                
+     1                          ; MIT License
+     2                          ;
+     3                          ; Copyright (c) 2023 Justin Skists
+     4                          ;
+     5                          ; Permission is hereby granted, free of charge, to any person obtaining a copy
+     6                          ; of this software and associated documentation files (the "Software"), to deal
+     7                          ; in the Software without restriction, including without limitation the rights
+     8                          ; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     9                          ; copies of the Software, and to permit persons to whom the Software is
+    10                          ; furnished to do so, subject to the following conditions:
+    11                          ;
+    12                          ; The above copyright notice and this permission notice shall be included in all
+    13                          ; copies or substantial portions of the Software.
+    14                          ;
+    15                          ; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    16                          ; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    17                          ; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    18                          ; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    19                          ; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    20                          ; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    21                          ; SOFTWARE.
+    22                          
+    23                          
+    24                          EXTERN main_code_start
+    25                          EXTERN main_code_warmstart
+    26                          
+    27                          PUBLIC _main
+    28                          
+    29                          SECTION code_user
+    30                          
+    31                          DEFC CHAR_CR = 13
+    32                          DEFC CHAR_LF = 10
+    33                          
+    34                          _main:
+    35  0000  210000                ld hl, signon_msg
+    36                          
+    37                          loop_signon:
+    38  0003  7e                    ld a, (hl)
+    39  0004  b7                    or a
+    40  0005  2800                  jr z, loop_exit
+    41  0007  cf                    rst 8
+    42  0008  23                    inc hl
+    43  0009  1800                  jr loop_signon
+    44                          
+    45                          loop_exit:
+    46  000b  c30000                jp main_code_start
+    47                          
+    48                          
+    49                          SECTION rodata_user
+    50                          
+    51                          signon_msg:
+    52  0000  0d0a                  DEFM 13, 10
+    53  0002  004332300434202d      DEFM "RC2014 - CamelForth BootROM - v20230819", 13, 10
+              f8430000656c466f  
+              72746820426f6f74  
+              524f4d202d207632  
+              303233303831390d  
+              0a                
+    54  002b  506f727465642074      DEFM "Ported to RC2014 ROM by Justin Skists", 13, 10, 0
+              6f20524332303134  
+              20524f4d20627920  
+              4a757374696e2053  
+              6b697374730d0a00  
+    55                          
+    56                          
