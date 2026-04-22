@@ -1,5 +1,4 @@
-This site also covers the 56k versions, the only difference is the ammount of memory. Basic auto detects this.
-Only Camelforth needs to have an address changed in it's ASM file. Hence the 56k version above
+This site also covers the 56k versions, the only difference is the ammount of memory. BasicC version provides pre-set build sub directories for 32k and 556k versions. I think all the others auto-detect (I may be wrong about this, double check and readme's in the build folders)
 
 These are few BASIC programs, as text, you can upload them by cut-n-past if needed.
 
